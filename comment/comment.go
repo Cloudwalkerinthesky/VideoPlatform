@@ -107,7 +107,6 @@ func DeleteCommentHandler(c *gin.Context) {
 		return
 	}
 	userId := uint64(userIdFloat64)
-
 	database := db.GetDB() //获取数据库句柄
 	var comment db.Comment //定义结构体变量，稍后查询结果会被填入这里
 	//先检查评论是否存在
@@ -120,9 +119,11 @@ func DeleteCommentHandler(c *gin.Context) {
 		}
 		return
 	}
-	//再检查权限
-	//如果当前用户不是该评论发布者，没有权限删除该评论
-	if comment.CommenterId != userId {
+	//再检查角色
+	role, _ := c.Get("role")
+	userRole := role.(string)
+	//如果当前用户不是该评论发布者或者管理员角色，没有权限删除该评论
+	if comment.CommenterId != userId && userRole != "admin" && userRole != "moderator" {
 		c.JSON(403, gin.H{"error": "您无权限删除该评论"})
 		return
 	}

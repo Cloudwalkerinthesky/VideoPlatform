@@ -31,13 +31,15 @@ type Reply struct {
 var jwtKey = []byte("kirakira_dokidoki")
 
 // 生成JWT token
-func generateToken(user db.User) (string, int64, error) {
+func generateToken(user db.User, role string, permissions []string) (string, int64, error) {
 	expirationTime := time.Now().Add(time.Hour * 2).Unix()
 	//创建claims
 	claims := jwt.MapClaims{
-		"user_id":  user.ID,
-		"username": user.Name,
-		"exp":      expirationTime,
+		"user_id":     user.ID,
+		"username":    user.Name,
+		"role":        role,
+		"permissions": permissions,
+		"exp":         expirationTime,
 	}
 	//创建token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -80,6 +82,11 @@ func LoginHandler(c *gin.Context) {
 				c.JSON(500, gin.H{"error": "创建用户失败"})
 				return
 			}
+			//【RBAC新增】给新用户分配默认角色user
+			if err := db.AssignDefaultRole(user.ID); err != nil {
+				c.JSON(500, gin.H{"error": "分配用户默认角色失败"})
+				return
+			}
 
 		} else {
 			//其他查询错误
@@ -102,7 +109,15 @@ func LoginHandler(c *gin.Context) {
 		c.JSON(401, gin.H{"error": "密码错误"})
 		return
 	}
-	token, expiresAt, err := generateToken(user)
+	//【RBAC新增】查询用户角色和权限
+	roleName, permissionNames, err := db.GetUserRolesAndPermissions(user.ID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "获取用户角色与权限失败"})
+		return
+	}
+
+	//生成token
+	token, expiresAt, err := generateToken(user, roleName, permissionNames)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "生成令牌失效"})
 		return
@@ -151,6 +166,9 @@ func AuthMiddleware() gin.HandlerFunc {
 		//把解析出来的用户名和用户id放到上下文中
 		c.Set("username", claims["username"])
 		c.Set("user_id", claims["user_id"])
+		//把角色和权限也放入
+		c.Set("role", claims["role"])
+		c.Set("permissions", claims["permissions"])
 		c.Next()
 	}
 }

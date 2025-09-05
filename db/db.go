@@ -30,7 +30,7 @@ func InitDB() {
 	//自动迁移，检查有没有名为users,videoInfos,comments的表(默认表名为结构体小写加复数)
 	//如果没有表，自动创建表。如果表已经存在，检查字段是否缺失，如果缺失则补上
 	//不会删除已有字段，不会修改字段类型
-	db.AutoMigrate(&User{}, &VideoInfo{}, &Comment{})
+	db.AutoMigrate(&User{}, &VideoInfo{}, &Comment{}, &Role{}, &Permission{}, &UserRole{}, &RolePermission{})
 }
 
 // gorm自动创建对应sql语句
@@ -52,10 +52,89 @@ type VideoInfo struct {
 
 type Comment struct {
 	ID              uint64    `gorm:"primaryKey;autoIncrement"`
-	VideoId         uint64    `gorm:"not null" ` //日后可以建索引
+	VideoId         uint64    `gorm:"not null;index" ` //建索引
 	CommenterId     uint64    `gorm:"not null"`
 	Content         string    `gorm:"type:varchar(1000)"` //1000字符以内 相当于"size:1000"
 	CommentTime     time.Time `gorm:"autoCreateTime"`
 	ParentCommentId uint64    //我想让它默认值为空,怎么弄？不管是不是就默认为空了？
 	LikeCount       uint64    `gorm:"default:0"`
+}
+
+// 角色表
+type Role struct {
+	ID          uint64 `gorm:"primaryKey;autoIncrement"`
+	Name        string `gorm:"unique;size:50"` //1:user,2:admin,3:moderator
+	Description string `gorm:"size:200"`
+}
+
+// 权限表
+type Permission struct {
+	ID          uint64 `gorm:"primaryKey;autoIncrement"`
+	Name        string `gorm:"unique;size:50"` //1:delete_comment,2:delete_video,3:delete_account
+	Action      string `gorm:"size:50"`        //create,read,upload,delete
+	Description string `gorm:"size:200"`
+	Resource    string `gorm:"size:50"` //video,comment,account
+}
+
+// 用户-角色关联表
+type UserRole struct {
+	ID     uint64 `gorm:"primaryKey;autoIncrement"`
+	UserId uint64 `gorm:"not null;index"`
+	RoleId uint64 `gorm:"not null;index"`
+}
+
+// 角色-权限 关联表
+type RolePermission struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	RoleId       uint64 `gorm:"not null;index"`
+	PermissionId uint64 `gorm:"not null;index"`
+}
+
+// 查询用户的 角色和权限 的函数
+func GetUserRolesAndPermissions(userId uint64) (string, []string, error) {
+	//SELECT r.name from user_roles ur
+	// join roles r on r.id=ur.role_id
+	// WHERE ur.user_id=xxx;
+	var roleName string
+	err := db.Table("user_roles").
+		Select("r.name").
+		Joins("JOIN roles r ON r.id=user_roles.role_id").
+		Where("user_roles.user_id=?", userId).
+		Pluck("name", &roleName).Error
+	if err != nil {
+		return "", nil, err
+	}
+	// SELECT DISTINCT p.name from user_roles ur
+	// JOIN role_permissions rp ON ur.role_id=rp.role_id
+	// JOIN permissions p ON p.id=rp.permission_id
+	// WHERE ur.user_id=xxx;
+	var permissionNames []string
+	err = db.Table("user_roles").
+		Select("DISTINCT p.name").
+		Joins("JOIN role_permissions rp ON user_roles.role_id=rp.role_id").
+		Joins("JOIN permissions p ON p.id=rp.permission_id").
+		Where("user_roles.user_id=?", userId).
+		Pluck("name", &permissionNames).Error
+	if err != nil {
+		return "", nil, err
+	}
+	return roleName, permissionNames, nil
+}
+
+// 给用户分配默认角色 user
+func AssignDefaultRole(userId uint64) error {
+	var userRoles Role //存放查找结果
+	//在角色表中查找名字为user的角色的那行数据 ,填充到userRoles这个结构体中
+	//SELECT * FROM roles WHERE name='user' LIMIT 1;
+	err := db.Where("name=?", "user").First(&userRoles).Error
+	if err != nil {
+		return err
+	}
+	//构建一条 用户-角色表 的新记录
+	userRoleAssignment := UserRole{
+		UserId: userId,
+		RoleId: userRoles.ID,
+	}
+	//INSERT INTO user_roles (user_id,role_id) VALUES (?,?);
+	return db.Create(&userRoleAssignment).Error //插入这条新映射到用户-角色表中
 }
