@@ -2,8 +2,11 @@ package comment
 
 import (
 	"Project01/db"
+	"bufio"
 	"errors"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -57,6 +60,8 @@ func PostCommentHandler(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "参数错误"})
 		return
 	}
+	//敏感词过滤
+	commentReq.Content = replaceSenstiveWords(commentReq.Content)
 
 	//2.把评论写入数据库
 	var comment db.Comment
@@ -136,4 +141,59 @@ func DeleteCommentHandler(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "删除评论成功"})
+}
+
+// 敏感词替换
+func replaceSenstiveWords(comment string) string {
+	//文件中读取敏感词
+	sensitiveWords, err := readSensitiveWordsFromFile()
+	if err != nil {
+		//读取失败返回原内容
+		return comment
+	}
+
+	filteredContent := comment
+	lowwerContent := strings.ToLower(comment) //统一存储评论的小写形式方便过滤
+	for _, word := range sensitiveWords {
+		lowwerWord := strings.ToLower(word) //敏感词的小写形式，用于查找
+		replacement := strings.Repeat("*", len(word))
+		for {
+			//查找是否有敏感词
+			index := strings.Index(lowwerContent, lowwerWord)
+			if index == -1 {
+				//没有敏感词
+				break
+			}
+			//替换字符串对应位置
+			filteredContent = filteredContent[:index] + replacement + filteredContent[index+len(word):]
+			//更新小写评论版本继续查找
+			lowwerContent = strings.ToLower(filteredContent)
+		}
+	}
+	return filteredContent
+}
+func readSensitiveWordsFromFile() ([]string, error) {
+	//1.打开文件，逐行扫描
+	file, err := os.Open("comment/senstiveWords.txt")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var words []string
+	scanner := bufio.NewScanner(file)
+	//scanner.Scan：每次循环读取一行内容
+	for scanner.Scan() {
+		//Text()获取当前行的文本内容
+		//strings.TrimSpace()去掉一行中前后多余的空格换行
+		//strings.TrimeSpace("   hello   \n")->"hello"
+		word := strings.TrimSpace(scanner.Text())
+		if word != "" {
+			words = append(words, word)
+		}
+	}
+	//2.检查扫描过程中有没有出错
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return words, nil
 }
