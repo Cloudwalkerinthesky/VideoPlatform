@@ -30,7 +30,9 @@ func InitDB() {
 	//自动迁移，检查有没有名为users,videoInfos,comments的表(默认表名为结构体小写加复数)
 	//如果没有表，自动创建表。如果表已经存在，检查字段是否缺失，如果缺失则补上
 	//不会删除已有字段，不会修改字段类型
-	db.AutoMigrate(&User{}, &VideoInfo{}, &Comment{}, &Role{}, &Permission{}, &UserRole{}, &RolePermission{})
+	db.AutoMigrate(&User{}, &VideoInfo{}, &Comment{},
+		&Role{}, &Permission{}, &UserRole{}, &RolePermission{},
+		&UploadSession{}, &ChunkRecord{})
 }
 
 // gorm自动创建对应sql语句
@@ -137,4 +139,41 @@ func AssignDefaultRole(userId uint64) error {
 	}
 	//INSERT INTO user_roles (user_id,role_id) VALUES (?,?);
 	return db.Create(&userRoleAssignment).Error //插入这条新映射到用户-角色表中
+}
+
+// 实现上传时断点续传
+
+// 上传会话表
+type UploadSession struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	UploadId     string `gorm:"uniqueIndex;size:100"` //UUID，标识一次上传任务（创建唯一索引）
+	UserId       uint64 `gorm:"index"`                //用户ID,创建索引
+	FileName     string `gorm:"size:255"`
+	TotalSize    uint64 //文件总大小
+	ChunkSize    uint64 `gorm:"default:5242880"` //分片大小默认5MB=5*1024*1024字节
+	TotalChunks  uint64 //总分片数
+	UploadedSize uint64 //已上传大小
+	Status       string `gorm:"size:20;default:'uploading'"` //uploading,completed,failed
+	//创建时间，记录这个上传任务什么时候开始的
+	CreatedTime time.Time `gorm:"autoCreateTime"`
+	//更新时间：每次上传一个分片，都会更新UploadedSize,UpdatedTime会自动刷新，
+	//表示最新进度更新时间，可以用它来判断上传是不是还在进行
+	UpdatedTime time.Time `gorm:"autoUpdateTime"`
+}
+
+// 分片记录表
+type ChunkRecord struct {
+	ID uint64 `gorm:"primaryKey;autoIncrement"`
+	//给UploadId和ChunkIndex分别建各自的索引
+	//再建立一个(UploadId,ChunkIndex)联合索引
+	UploadId   string `gorm:"index;uniqueIndex:idx_upload_chunk;size:100"` //UUID，上传会话的唯一标识，用来标明这个分片属于哪个会话
+	ChunkIndex uint64 `gorm:"index;uniqueIndex:idx_upload_chunk"`          //分片编号
+
+	Size        uint64    //分片大小
+	Status      string    `gorm:"default:pending"` //pending/uploading/completed/failed
+	S3Key       string    //分片在MinIO中的存储路径
+	StartByte   uint64    //分片起始字节
+	EndByte     uint64    //分片结束字节
+	Checksum    string    //校验和(MD5/SHA-256)
+	CreatedTime time.Time `gorm:"autoCreateTime"`
 }

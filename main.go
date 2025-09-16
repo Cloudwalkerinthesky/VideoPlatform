@@ -32,6 +32,13 @@ func main() {
 	{ //需要鉴权的操作
 		//上传视频
 		auth.POST("/upload", video.UploadVideoHandler)
+
+		//上传时断点续传相关
+		auth.POST("/upload/init", video.InitUploadHandler)                     //初始化上传
+		auth.POST("/upload/:uploadId/chunk/:index", video.UploadChunkHandler)  //分片上传
+		auth.GET("/upload/:uploadId/progress", video.GetUploadProgressHandler) //查询进度
+		auth.POST("/upload/:uploadId/complete", video.CompleteUploadHandler)   //完成上传
+
 		//播放视频 动态定义参数filename
 		auth.GET("/video/:filename", video.PlayVideoHandler)
 		//发布评论
